@@ -1,0 +1,179 @@
+datadir = tempdir; 
+downloadCIFARData(datadir);
+[XTrain,TTrain,XValidation,TValidation] = loadCIFARData(datadir);
+figure;
+idx = randperm(size(XTrain,4),20);
+im = imtile(XTrain(:,:,:,idx),ThumbnailSize=[96,96]);
+imshow(im)
+imageSize = [32 32 3];
+pixelRange = [-4 4];
+imageAugmenter = imageDataAugmenter( ...
+    RandXReflection=true, ...
+    RandXTranslation=pixelRange, ...
+    RandYTranslation=pixelRange);
+augimdsTrain = augmentedImageDatastore(imageSize,XTrain,TTrain, ...
+    DataAugmentation=imageAugmenter, ...
+    OutputSizeMode="randcrop");
+    initialFilterSize = 3;
+numInitialFilters = 16;
+initialStride = 1;
+
+numFilters = [16 32 64];
+stackDepth = [4 3 2];
+
+lgraph = resnetLayers(imageSize,10, ...
+    InitialFilterSize=initialFilterSize, ...
+    InitialNumFilters=numInitialFilters, ...
+    InitialStride=initialStride, ...
+    InitialPoolingLayer="none", ...
+    StackDepth=[4 3 2], ... 
+    NumFilters=[16 32 64]);
+    plot(lgraph);
+    miniBatchSize = 128;
+learnRate = 0.1*miniBatchSize/128;
+valFrequency = floor(size(XTrain,4)/miniBatchSize);
+options = trainingOptions("sgdm", ...
+    InitialLearnRate=learnRate, ...
+    MaxEpochs=80, ...
+    MiniBatchSize=miniBatchSize, ...
+    VerboseFrequency=valFrequency, ...
+    Shuffle="every-epoch", ...
+    Plots="training-progress", ...
+    Verbose=false, ...
+    ValidationData={XValidation,TValidation}, ...
+    ValidationFrequency=valFrequency, ...
+    LearnRateSchedule="piecewise", ...
+    LearnRateDropFactor=0.1, ...
+    LearnRateDropPeriod=60);
+    doTraining = false;
+if doTraining
+    net = trainNetwork(augimdsTrain,lgraph,options);
+else
+    load("trainedResidualNetwork.mat","net");
+end
+[YValPred,probs] = classify(net,XValidation);
+validationError = mean(YValPred ~= TValidation);
+YTrainPred = classify(net,XTrain);
+trainError = mean(YTrainPred ~= TTrain);
+disp("Training error: " + trainError*100 + "%")
+disp("Validation error: " + validationError*100 + "%)
+figure(Units="normalized",Position=[0.2 0.2 0.4 0.4]);
+cm = confusionchart(TValidation,YValPred);
+cm.Title = "Confusion Matrix for Validation Data";
+cm.ColumnSummary = "column-normalized";
+cm.RowSummary = "row-normalized";
+figure
+idx = randperm(size(XValidation,4),9);
+for i = 1:numel(idx)
+    subplot(3,3,i)
+    imshow(XValidation(:,:,:,idx(i)));
+    prob = num2str(100*max(probs(idx(i),:)),3);
+    predClass = char(YValPred(idx(i)));
+    title([predClass + ", " + prob + "%"])
+end
+unzip('MerchData.zip');
+imds = imageDatastore('MerchData', ...
+    'IncludeSubfolders',true, ...
+    'LabelSource','foldernames');
+    [imdsTrain,imdsValidation] = splitEachLabel(imds,0.7,'randomized');
+    numTrainImages = numel(imdsTrain.Labels);
+idx = randperm(numTrainImages,16);
+figure
+for i = 1:16
+    subplot(4,4,i)
+    I = readimage(imdsTrain,idx(i));
+    imshow(I)
+end
+net = alexnet;
+analyzeNetwork(net)
+inputSize = net.Layers(1).InputSize
+layersTransfer = net.Layers(1:end-3);
+numClasses = numel(categories(imdsTrain.Labels))
+layers = [
+    layersTransfer
+    fullyConnectedLayer(numClasses,'WeightLearnRateFactor',20,'BiasLearnRateFactor',20)
+    softmaxLayer
+    classificationLayer];
+    pixelRange = [-30 30];
+imageAugmenter = imageDataAugmenter( ...
+    'RandXReflection',true, ...
+    'RandXTranslation',pixelRange, ...
+    'RandYTranslation',pixelRange);
+augimdsTrain = augmentedImageDatastore(inputSize(1:2),imdsTrain, ...
+    'DataAugmentation',imageAugmenter);
+    augimdsValidation = augmentedImageDatastore(inputSize(1:2),imdsValidation);
+ options = trainingOptions('sgdm', ...
+    'MiniBatchSize',10, ...
+    'MaxEpochs',6, ...
+    'InitialLearnRate',1e-4, ...
+    'Shuffle','every-epoch', ...
+    'ValidationData',augimdsValidation, ...
+    'ValidationFrequency',3, ...
+    'Verbose',false, ...
+    'Plots','training-progress');
+    netTransfer = trainNetwork(augimdsTrain,layers,options);
+    [YPred,scores] = classify(netTransfer,augimdsValidation);
+    idx = randperm(numel(imdsValidation.Files),4);
+figure
+for i = 1:4
+    subplot(2,2,i)
+    I = readimage(imdsValidation,idx(i));
+    imshow(I)
+    label = YPred(idx(i));
+    title(string(label));
+end
+YValidation = imdsValidation.Labels;
+accuracy = mean(YPred == YValidation)
+net = alexnet;
+I = imread('peppers.png');
+figure
+imshow(I)
+sz = net.Layers(1).InputSize
+I = imresize(I,sz(1:2));
+figure
+imshow(I)
+label = classify(net,I)
+figure
+imshow(I)
+title(label)
+unzip('MerchData.zip');
+
+imds = imageDatastore('MerchData', ...
+    'IncludeSubfolders',true, ...
+    'LabelSource','foldernames');
+
+[imdsTrain,imdsTest] = splitEachLabel(imds,0.7,'randomized');
+numImagesTrain = numel(imdsTrain.Labels);
+idx = randperm(numImagesTrain,16);
+
+for i = 1:16
+    I{i} = readimage(imdsTrain,idx(i));
+end
+
+figure
+imshow(imtile(I))
+net = alexnet;
+Net.Layers
+inputSize = net.Layers(1).InputSize
+augimdsTrain = augmentedImageDatastore(inputSize(1:2),imdsTrain);
+augimdsTest = augmentedImageDatastore(inputSize(1:2),imdsTest);
+
+layer = 'fc7';
+featuresTrain = activations(net,augimdsTrain,layer,'OutputAs','rows');
+featuresTest = activations(net,augimdsTest,layer,'OutputAs','rows');
+YTrain = imdsTrain.Labels;
+YTest = imdsTest.Labels;
+mdl = fitcecoc(featuresTrain,YTrain);
+YPred = predict(mdl,featuresTest);
+idx = [1 5 10 15];
+figure
+for i = 1:numel(idx)
+    subplot(2,2,i)
+    I = readimage(imdsTest,idx(i));
+    label = YPred(idx(i));
+    
+    imshow(I)
+    title(label)
+end
+accuracy = mean(YPred == YTest)
+end
